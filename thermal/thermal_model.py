@@ -6,97 +6,203 @@ class TransformerThermalModel:
     """
     Simplified IEEE C57.91-based thermal model
     for an oil-immersed distribution transformer.
+
+    Calculates:
+    - Top-oil temperature
+    - Winding hot-spot temperature
+    - Aging acceleration factor
+
+    Temperatures: °C
+    Load: per-unit (pu)
     """
 
     def __init__(
         self,
         tau_oil=3.0,
+        tau_winding=0.25,
         delta_theta_or=55.0,
-        y=0.8,
-        H=1.3,
-        g=23.0,
+        delta_theta_hr=30.0,
+        R=5.0,
+        n=0.8,
+        m=0.8,
         rated_capacity=500.0,
     ):
         self.tau_oil = tau_oil
+        self.tau_winding = tau_winding
         self.delta_theta_or = delta_theta_or
-        self.y = y
-        self.H = H
-        self.g = g
+        self.delta_theta_hr = delta_theta_hr
+        self.R = R
+        self.n = n
+        self.m = m
         self.rated_capacity = rated_capacity
 
-    def simulate(self, load_profile, ambient_profile, dt_hours=1.0):
-        """
-        Simulate transformer thermal behavior.
-
-        Parameters
-        ----------
-        load_profile : array-like
-            Load ratio K = actual load / rated load.
-        ambient_profile : array-like
-            Ambient temperature in °C.
-        dt_hours : float
-            Simulation time step in hours.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Ambient, load, top-oil, hotspot and aging factor.
-        """
+    def simulate(
+        self,
+        load_profile,
+        ambient_profile,
+        dt_hours=1.0,
+    ):
 
         load_profile = np.asarray(load_profile, dtype=float)
         ambient_profile = np.asarray(ambient_profile, dtype=float)
 
+        # -----------------------------
+        # Input validation
+        # -----------------------------
+
+        if load_profile.ndim != 1:
+            raise ValueError("load_profile must be one-dimensional.")
+
+        if ambient_profile.ndim != 1:
+            raise ValueError("ambient_profile must be one-dimensional.")
+
         if len(load_profile) != len(ambient_profile):
             raise ValueError(
-                "load_profile and ambient_profile must have the same length."
+                "load_profile and ambient_profile must have "
+                "the same length."
             )
 
         if len(load_profile) == 0:
             raise ValueError("Profiles cannot be empty.")
 
+        if not np.all(np.isfinite(load_profile)):
+            raise ValueError(
+                "load_profile contains invalid values."
+            )
+
+        if not np.all(np.isfinite(ambient_profile)):
+            raise ValueError(
+                "ambient_profile contains invalid values."
+            )
+
         if np.any(load_profile < 0):
-            raise ValueError("Load ratio cannot be negative.")
+            raise ValueError(
+                "Load ratio cannot be negative."
+            )
 
-        n = len(load_profile)
+        if dt_hours <= 0:
+            raise ValueError(
+                "dt_hours must be greater than zero."
+            )
 
+        if self.tau_oil <= 0:
+            raise ValueError(
+                "tau_oil must be greater than zero."
+            )
+
+        if self.tau_winding <= 0:
+            raise ValueError(
+                "tau_winding must be greater than zero."
+            )
+
+        n_points = len(load_profile)
+
+        # -----------------------------
         # Top-oil temperature
-        theta_to = np.zeros(n)
+        # -----------------------------
 
-        # Initial top-oil temperature
-        theta_to[0] = (
-            ambient_profile[0])
+        top_oil = np.zeros(n_points)
 
-        # Time-domain thermal response
-        for i in range(1, n):
+        top_oil[0] = ambient_profile[0]
+
+        oil_response = np.exp(
+            -dt_hours / self.tau_oil
+        )
+
+        for i in range(1, n_points):
+
             K = load_profile[i - 1]
-            theta_a = ambient_profile[i - 1]
+            theta_ambient = ambient_profile[i - 1]
 
-            dtheta_dt = (
-                self.delta_theta_or * K**self.y
-                - (theta_to[i - 1] - theta_a)
-            ) / self.tau_oil
+            loss_ratio = (
+                (K**2 * self.R + 1.0)
+                / (self.R + 1.0)
+            )
 
-            theta_to[i] = theta_to[i - 1] + dtheta_dt * dt_hours
+            delta_theta_to_u = (
+                self.delta_theta_or
+                * loss_ratio**self.n
+            )
 
+            delta_theta_to_i = (
+                top_oil[i - 1]
+                - theta_ambient
+            )
+
+            delta_theta_to = (
+                delta_theta_to_u
+                + (
+                    delta_theta_to_i
+                    - delta_theta_to_u
+                )
+                * oil_response
+            )
+
+            top_oil[i] = (
+                theta_ambient
+                + delta_theta_to
+            )
+
+        # -----------------------------
+        # Winding hot-spot rise
+        # -----------------------------
+
+        hotspot_rise = np.zeros(n_points)
+
+        winding_response = np.exp(
+            -dt_hours / self.tau_winding
+        )
+
+        for i in range(1, n_points):
+
+            K = load_profile[i]
+
+            target_hotspot_rise = (
+                self.delta_theta_hr
+                * K ** (2 * self.m)
+            )
+
+            hotspot_rise[i] = (
+                target_hotspot_rise
+                + (
+                    hotspot_rise[i - 1]
+                    - target_hotspot_rise
+                )
+                * winding_response
+            )
+
+        # -----------------------------
         # Hotspot temperature
-        theta_hs = (
-            theta_to
-            + self.H * self.g * load_profile**self.y
+        # -----------------------------
+
+        hotspot = top_oil + hotspot_rise
+
+        # -----------------------------
+        # Aging acceleration factor
+        # -----------------------------
+
+        aging_factor = np.exp(
+            (15000.0 / 383.0)
+            - (
+                15000.0
+                / (hotspot + 273.0)
+            )
         )
 
-        # Arrhenius aging acceleration factor
-        aging_factor = np.exp(
-            (15000 / 383)
-            - (15000 / (theta_hs + 273))
-        )
+        # -----------------------------
+        # Result
+        # -----------------------------
 
         return pd.DataFrame(
             {
-                "time_hr": np.arange(n) * dt_hours,
+                "time_hr": (
+                    np.arange(n_points)
+                    * dt_hours
+                ),
                 "ambient_C": ambient_profile,
                 "load_pu": load_profile,
-                "top_oil_C": theta_to,
-                "hotspot_C": theta_hs,
+                "top_oil_C": top_oil,
+                "hotspot_C": hotspot,
                 "aging_factor": aging_factor,
             }
         )
@@ -104,13 +210,31 @@ class TransformerThermalModel:
 
 if __name__ == "__main__":
 
-    # First validation case from the project plan:
-    # 30°C ambient, 1.0 pu load, 24 hours.
-
     model = TransformerThermalModel()
 
-    load = np.ones(25)
-    ambient = np.full(25, 30.0)
+    load = np.array(
+        [
+            0.4,
+            0.6,
+            0.8,
+            1.0,
+            1.2,
+            1.0,
+            0.7,
+        ]
+    )
+
+    ambient = np.array(
+        [
+            30,
+            30,
+            31,
+            31,
+            32,
+            32,
+            31,
+        ]
+    )
 
     result = model.simulate(
         load_profile=load,
@@ -119,19 +243,22 @@ if __name__ == "__main__":
     )
 
     print("\nTHERMOGRID THERMAL ENGINE")
-    print("-" * 35)
+    print("-" * 40)
 
-    print(f"Ambient temperature : {ambient[0]:.1f} °C")
-    print(f"Load                : {load[0]:.2f} pu")
-    print(f"Final top-oil       : {result['top_oil_C'].iloc[-1]:.2f} °C")
-    print(f"Peak top-oil        : {result['top_oil_C'].max():.2f} °C")
-    print(f"Peak hotspot        : {result['hotspot_C'].max():.2f} °C")
-    print(f"Peak aging factor   : {result['aging_factor'].max():.2f}×")
-    print("\nThermal response:")
-for hour in [0, 1, 3, 6, 12, 24]:
-    row = result.iloc[hour]
     print(
-        f"Hour {hour:2d}: "
-        f"Top-oil = {row['top_oil_C']:.2f} °C, "
-        f"Hotspot = {row['hotspot_C']:.2f} °C"
+        f"Peak top-oil     : "
+        f"{result['top_oil_C'].max():.2f} °C"
     )
+
+    print(
+        f"Peak hotspot     : "
+        f"{result['hotspot_C'].max():.2f} °C"
+    )
+
+    print(
+        f"Peak aging factor: "
+        f"{result['aging_factor'].max():.3f}×"
+    )
+
+    print("\nThermal response:")
+    print(result.to_string(index=False))
