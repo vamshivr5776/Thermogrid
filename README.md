@@ -1136,5 +1136,5 @@ Deployment
 ## 🌡️ ThermoGrid AI
 
 > **Turning environmental temperature into transformer thermal intelligence.**
-**ThermoGrid AI — Dynamic Thermal Rating & Predictive Overload Management for Urban Distribution Transformers.**
+**ThermoGrid AI — Turning Hyperlocal Heat into Predictive Transformer Risk Intelligence**
 
