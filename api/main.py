@@ -24,7 +24,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
     "http://localhost:5173",
-    "https://thermogrid.vamshivr5776.workers.dev",
+    "https://thermogrid.netonline.in/",
 ],
     allow_credentials=True,
     allow_methods=["*"],
