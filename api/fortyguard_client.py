@@ -90,7 +90,26 @@ class FortyGuardClient:
     ):
         for attempt in range(max_attempts):
 
-            response = self.get_status(activity_id)
+            try:
+                response = self.get_status(activity_id)
+
+            except requests.HTTPError as e:
+                # FortyGuard can temporarily return 404 immediately
+                # after an activity is created. Keep polling instead
+                # of terminating the entire ThermoGrid analysis.
+                if (
+                    e.response is not None
+                    and e.response.status_code == 404
+                ):
+                    print(
+                        f"FORTYGUARD STATUS 404 "
+                        f"(attempt {attempt + 1}/{max_attempts}) "
+                        f"- retrying..."
+                    )
+                    time.sleep(delay)
+                    continue
+
+                raise
 
             data = response.get("data", {})
             status = str(
