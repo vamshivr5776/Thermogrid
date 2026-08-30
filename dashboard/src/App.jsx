@@ -23,10 +23,6 @@ import "./App.css";
 // ---------------------------------------------------------
 // Default AOI
 // ---------------------------------------------------------
-// Current test region around Phoenix, Arizona.
-// Later this should become dynamically generated from
-// the transformer coordinates.
-// ---------------------------------------------------------
 
 const DEFAULT_AOI = {
   type: "Polygon",
@@ -43,21 +39,15 @@ const API_URL = "https://thermogrid.onrender.com";
 
 
 // ---------------------------------------------------------
+// Phoenix timezone
+// ---------------------------------------------------------
+
+const PHOENIX_TIMEZONE = "America/Phoenix";
+
+
+// ---------------------------------------------------------
 // Verification map
 // ---------------------------------------------------------
-// This is a visualization layer only. It does not change the
-// ThermoGrid analysis request or backend logic.
-//
-// The current backend response contains the mapped tile ID,
-// temperature, mapping method and distance, but not the full
-// FortyGuard tile geometries. Therefore this map shows:
-//   1. The ThermoGrid AOI
-//   2. The transformer coordinate
-//   3. The temperature returned by SpatialMapper
-//   4. The selected tile ID / mapping method
-//
-// Actual FortyGuard heatmap tile polygons can only be drawn
-// after the backend exposes their geometries in its response.
 
 function MapViewport({ transformer, aoi }) {
   const map = useMap();
@@ -83,12 +73,55 @@ function MapViewport({ transformer, aoi }) {
   return null;
 }
 
+
+// ---------------------------------------------------------
+// Format Phoenix time for display
+// ---------------------------------------------------------
+
+function formatPhoenixDateTime(dateString, timeString) {
+  if (!dateString || !timeString) {
+    return "Loading Phoenix time...";
+  }
+
+  const [year, month, day] =
+    dateString.split("-").map(Number);
+
+  const [hours, minutes] =
+    timeString.split(":").map(Number);
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ) {
+    return "Phoenix time unavailable";
+  }
+
+  const period = hours >= 12 ? "PM" : "AM";
+
+  const displayHour = hours % 12 || 12;
+
+  return `${String(displayHour).padStart(2, "0")}:${String(
+    minutes
+  ).padStart(2, "0")} ${period}`;
+}
+
+
+// ---------------------------------------------------------
+// Application
+// ---------------------------------------------------------
+
 function App() {
+
   // -------------------------------------------------------
   // API status
   // -------------------------------------------------------
 
-  const [apiConnected, setApiConnected] = useState(false);
+  const [apiConnected, setApiConnected] =
+    useState(false);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +135,7 @@ function App() {
         if (!cancelled) {
           setApiConnected(response.ok);
         }
+
       } catch {
         if (!cancelled) {
           setApiConnected(false);
@@ -122,6 +156,7 @@ function App() {
     };
   }, []);
 
+
   // -------------------------------------------------------
   // Transformer location
   // -------------------------------------------------------
@@ -132,26 +167,122 @@ function App() {
   const [longitude, setLongitude] =
     useState("-112.0740");
 
+
+  // -------------------------------------------------------
+  // Phoenix analysis date/time
+  //
+  // The browser may be running in India, but ThermoGrid
+  // uses the transformer's Phoenix local timeline.
+  //
+  // We calculate Phoenix time directly in the browser with
+  // the IANA timezone "America/Phoenix". This removes the
+  // broken /analysis/current-phoenix-time backend dependency
+  // that was returning HTTP 404.
+  // -------------------------------------------------------
+
+  const [startDate, setStartDate] =
+    useState("");
+
+  const [startTime, setStartTime] =
+    useState("");
+
+  const [phoenixNow, setPhoenixNow] =
+    useState(null);
+
+  const [phoenixTimeLoading, setPhoenixTimeLoading] =
+    useState(true);
+
+
+  // -------------------------------------------------------
+  // Get current Phoenix local date/time
+  // -------------------------------------------------------
+
+  function getPhoenixLocalDateTime() {
+
+    const formatter = new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone: PHOENIX_TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }
+    );
+
+    const parts = formatter.formatToParts(
+      new Date()
+    );
+
+    const values = {};
+
+    for (const part of parts) {
+      if (part.type !== "literal") {
+        values[part.type] = part.value;
+      }
+    }
+
+    return {
+      start_date:
+        `${values.year}-${values.month}-${values.day}`,
+
+      start_time:
+        `${values.hour}:${values.minute}`,
+    };
+  }
+
+
+  useEffect(() => {
+
+    let cancelled = false;
+
+    function updatePhoenixClock() {
+
+      const data =
+        getPhoenixLocalDateTime();
+
+      if (cancelled) return;
+
+      setPhoenixNow(data);
+
+      // Only fill empty fields. Once the user changes the
+      // date/time, the live clock will not overwrite it.
+      setStartDate((previous) =>
+        previous || data.start_date
+      );
+
+      setStartTime((previous) =>
+        previous || data.start_time
+      );
+
+      setPhoenixTimeLoading(false);
+    }
+
+    updatePhoenixClock();
+
+    // Update the displayed Phoenix clock every 30 seconds.
+    const interval = setInterval(
+      updatePhoenixClock,
+      30000
+    );
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+
+  }, []);
+
+
   // -------------------------------------------------------
   // FortyGuard analysis
   // -------------------------------------------------------
 
-  const getTodayLocalISO = () => {
-    const now = new Date();
-    const offset = now.getTimezoneOffset();
-    return new Date(now.getTime() - offset * 60000)
-      .toISOString()
-      .slice(0, 10);
-  };
-
-  const [startDate, setStartDate] =
-    useState(getTodayLocalISO);
-
-  const [startTime, setStartTime] =
-    useState("12:00");
-
   const [granularity, setGranularity] =
     useState(100);
+
 
   // -------------------------------------------------------
   // Transformer loading
@@ -164,6 +295,7 @@ function App() {
 
   const [dtHours, setDtHours] =
     useState(1);
+
 
   // -------------------------------------------------------
   // Application state
@@ -178,6 +310,7 @@ function App() {
   const [error, setError] =
     useState("");
 
+
   // -------------------------------------------------------
   // Live analysis timer
   // -------------------------------------------------------
@@ -185,7 +318,9 @@ function App() {
   const [elapsedMs, setElapsedMs] =
     useState(0);
 
+
   useEffect(() => {
+
     if (!loading) {
       return undefined;
     }
@@ -193,26 +328,33 @@ function App() {
     const startedAt = performance.now();
 
     const timer = setInterval(() => {
-      setElapsedMs(performance.now() - startedAt);
+      setElapsedMs(
+        performance.now() - startedAt
+      );
     }, 100);
 
     return () => clearInterval(timer);
+
   }, [loading]);
+
 
   const elapsedSeconds =
     (elapsedMs / 1000).toFixed(1);
+
 
   // -------------------------------------------------------
   // Run complete ThermoGrid analysis
   // -------------------------------------------------------
 
   async function runAnalysis() {
+
     setLoading(true);
     setElapsedMs(0);
     setError("");
     setResult(null);
 
     try {
+
       // ---------------------------------------------------
       // Parse numeric inputs
       // ---------------------------------------------------
@@ -221,6 +363,7 @@ function App() {
       const lon = Number(longitude);
       const dt = Number(dtHours);
       const gran = Number(granularity);
+
 
       // ---------------------------------------------------
       // Validate latitude
@@ -236,6 +379,7 @@ function App() {
         );
       }
 
+
       // ---------------------------------------------------
       // Validate longitude
       // ---------------------------------------------------
@@ -250,6 +394,7 @@ function App() {
         );
       }
 
+
       // ---------------------------------------------------
       // Validate time step
       // ---------------------------------------------------
@@ -262,6 +407,7 @@ function App() {
           "Time step must be greater than 0 hours."
         );
       }
+
 
       // ---------------------------------------------------
       // Validate granularity
@@ -276,6 +422,7 @@ function App() {
         );
       }
 
+
       // ---------------------------------------------------
       // Parse load profile
       // ---------------------------------------------------
@@ -285,6 +432,7 @@ function App() {
         .map((value) => value.trim())
         .filter((value) => value !== "")
         .map(Number);
+
 
       // ---------------------------------------------------
       // Validate load profile
@@ -316,25 +464,28 @@ function App() {
         );
       }
 
+
       // ---------------------------------------------------
-      // Validate date
+      // Validate Phoenix date
       // ---------------------------------------------------
 
       if (!startDate) {
         throw new Error(
-          "Please select an analysis date."
+          "Phoenix analysis date is not ready yet."
         );
       }
 
+
       // ---------------------------------------------------
-      // Validate time
+      // Validate Phoenix time
       // ---------------------------------------------------
 
       if (!startTime) {
         throw new Error(
-          "Please select an analysis time."
+          "Phoenix analysis time is not ready yet."
         );
       }
+
 
       // ---------------------------------------------------
       // Check backend availability
@@ -346,8 +497,19 @@ function App() {
         );
       }
 
+
       // ---------------------------------------------------
       // Send analysis request
+      //
+      // startDate and startTime are Phoenix local wall-clock
+      // values. They are NOT converted from India time.
+      //
+      // Example:
+      // Phoenix 05:00 -> send "05:00"
+      // Phoenix 14:00 -> send "14:00"
+      //
+      // The backend receives the exact Phoenix date/time
+      // selected by the user.
       // ---------------------------------------------------
 
       const response = await fetch(
@@ -360,22 +522,28 @@ function App() {
           },
 
           body: JSON.stringify({
+
             latitude: lat,
+
             longitude: lon,
 
             polygon_aoi: DEFAULT_AOI,
 
             start_date: startDate,
+
             start_time: startTime,
 
             load_profile:
               parsedLoadProfile,
 
             dt_hours: dt,
+
             granularity: gran,
+
           }),
         }
       );
+
 
       // ---------------------------------------------------
       // Parse server response safely
@@ -384,48 +552,66 @@ function App() {
       let data;
 
       try {
+
         data = await response.json();
+
       } catch {
+
         throw new Error(
           "ThermoGrid API returned an invalid response."
         );
+
       }
+
 
       // ---------------------------------------------------
       // Handle HTTP errors
       // ---------------------------------------------------
 
       if (!response.ok) {
+
         const serverMessage =
           typeof data?.detail === "string"
             ? data.detail
             : "";
 
+
         if (response.status === 400) {
+
           throw new Error(
             serverMessage ||
-              "Invalid analysis request."
+              "No FortyGuard temperature data is available for this Phoenix date/time."
           );
+
         }
 
+
         if (response.status === 502) {
+
           throw new Error(
             serverMessage ||
               "FortyGuard service is unavailable."
           );
+
         }
 
+
         if (response.status === 504) {
+
           throw new Error(
             "FortyGuard analysis timed out. Try a smaller AOI or try again."
           );
+
         }
+
 
         throw new Error(
           serverMessage ||
             `ThermoGrid API returned HTTP ${response.status}.`
         );
+
       }
+
 
       // ---------------------------------------------------
       // Validate returned result
@@ -440,6 +626,7 @@ function App() {
         );
       }
 
+
       if (
         !data.environment ||
         !data.thermal ||
@@ -451,33 +638,44 @@ function App() {
         );
       }
 
+
       setResult(data);
 
+
     } catch (err) {
+
       console.error(
         "ThermoGrid analysis error:",
         err
       );
 
+
       if (
         err instanceof TypeError &&
         err.message === "Failed to fetch"
       ) {
+
         setError(
           "Unable to reach the ThermoGrid API. Make sure the FastAPI server is running."
         );
+
       } else {
+
         setError(
           err instanceof Error
             ? err.message
             : "An unexpected error occurred."
         );
+
       }
 
     } finally {
+
       setLoading(false);
+
     }
   }
+
 
   // -------------------------------------------------------
   // Derived values
@@ -504,6 +702,7 @@ function App() {
         )
       : 0;
 
+
   // -------------------------------------------------------
   // Risk comes ONLY from backend
   // -------------------------------------------------------
@@ -514,12 +713,16 @@ function App() {
   const riskClass =
     riskLevel.toLowerCase();
 
+
   // -------------------------------------------------------
   // Map verification values
   // -------------------------------------------------------
 
-  const transformerLat = Number(latitude);
-  const transformerLon = Number(longitude);
+  const transformerLat =
+    Number(latitude);
+
+  const transformerLon =
+    Number(longitude);
 
   const validTransformerCoordinates =
     Number.isFinite(transformerLat) &&
@@ -534,30 +737,50 @@ function App() {
       ([lon, lat]) => [lat, lon]
     );
 
-  const mapCenter = validTransformerCoordinates
-    ? [transformerLat, transformerLon]
-    : [33.4484, -112.0740];
+  const mapCenter =
+    validTransformerCoordinates
+      ? [
+          transformerLat,
+          transformerLon,
+        ]
+      : [
+          33.4484,
+          -112.0740,
+        ];
+
 
   // -------------------------------------------------------
   // Render
   // -------------------------------------------------------
 
   return (
+
     <div className="app">
 
       {/* =================================================
-          HEADER
+          ANIMATIONS
       ================================================= */}
 
       <style>{`
+
         @keyframes thermoGridSpin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
+          from {
+            transform: rotate(0deg);
+          }
+
+          to {
+            transform: rotate(360deg);
+          }
         }
 
         @keyframes thermoGridSpinReverse {
-          from { transform: rotate(360deg); }
-          to { transform: rotate(0deg); }
+          from {
+            transform: rotate(360deg);
+          }
+
+          to {
+            transform: rotate(0deg);
+          }
         }
 
         @keyframes thermoGridPulse {
@@ -565,6 +788,7 @@ function App() {
             transform: scale(0.8);
             opacity: 0.65;
           }
+
           50% {
             transform: scale(1.35);
             opacity: 1;
@@ -572,12 +796,31 @@ function App() {
         }
 
         @keyframes thermoGridScan {
-          0% { transform: translateX(-120%); opacity: 0; }
-          15% { opacity: 1; }
-          85% { opacity: 1; }
-          100% { transform: translateX(120%); opacity: 0; }
+          0% {
+            transform: translateX(-120%);
+            opacity: 0;
+          }
+
+          15% {
+            opacity: 1;
+          }
+
+          85% {
+            opacity: 1;
+          }
+
+          100% {
+            transform: translateX(120%);
+            opacity: 0;
+          }
         }
+
       `}</style>
+
+
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
       <header
         className="header"
@@ -588,6 +831,7 @@ function App() {
       >
 
         <div>
+
           <div
             aria-hidden="true"
             style={{
@@ -601,12 +845,71 @@ function App() {
             ⚡ GRID INTELLIGENCE / THERMAL SYSTEM
           </div>
 
-          <h1>ThermoGrid</h1>
+          <h1>
+            ThermoGrid
+          </h1>
 
           <p>
             Transformer Thermal Intelligence
           </p>
+
         </div>
+
+
+        {/* Phoenix time display */}
+
+        <div
+          style={{
+            position: "absolute",
+            right: "270px",
+            top: "50%",
+            transform: "translateY(-50%)",
+            textAlign: "right",
+            minWidth: "145px",
+          }}
+        >
+
+          <div
+            style={{
+              fontSize: "10px",
+              letterSpacing: "1.5px",
+              textTransform: "uppercase",
+              opacity: 0.55,
+              marginBottom: "4px",
+            }}
+          >
+            PHOENIX LOCAL TIME
+          </div>
+
+          <div
+            style={{
+              fontSize: "18px",
+              fontWeight: 700,
+              color: "#67e8f9",
+            }}
+          >
+            {phoenixNow
+              ? formatPhoenixDateTime(
+                  phoenixNow.start_date,
+                  phoenixNow.start_time
+                )
+              : "Loading..."}
+          </div>
+
+          <div
+            style={{
+              fontSize: "10px",
+              opacity: 0.55,
+              marginTop: "3px",
+            }}
+          >
+            America/Phoenix
+          </div>
+
+        </div>
+
+
+        {/* Animated grid icon */}
 
         <div
           aria-hidden="true"
@@ -621,11 +924,13 @@ function App() {
             pointerEvents: "none",
           }}
         >
+
           <div
             style={{
               position: "absolute",
               inset: 0,
-              border: "1px solid rgba(56,189,248,0.3)",
+              border:
+                "1px solid rgba(56,189,248,0.3)",
               borderRadius: "50%",
               animation:
                 "thermoGridSpin 10s linear infinite",
@@ -636,7 +941,8 @@ function App() {
             style={{
               position: "absolute",
               inset: "13px",
-              border: "1px dashed rgba(45,212,191,0.35)",
+              border:
+                "1px dashed rgba(45,212,191,0.35)",
               borderRadius: "50%",
               animation:
                 "thermoGridSpinReverse 7s linear infinite",
@@ -652,25 +958,30 @@ function App() {
               inset: 0,
             }}
           >
+
             <path
               d="M18 25 H34 M58 25 H74 M18 67 H34 M58 67 H74"
               stroke="rgba(56,189,248,0.65)"
               strokeWidth="2"
               fill="none"
             />
+
             <path
               d="M31 18 C22 25 22 34 31 41 C40 48 40 57 31 64 C22 71 22 78 31 84"
               stroke="#38bdf8"
               strokeWidth="3"
               fill="none"
             />
+
             <path
               d="M61 18 C52 25 52 34 61 41 C70 48 70 57 61 64 C52 71 52 78 61 84"
               stroke="#2dd4bf"
               strokeWidth="3"
               fill="none"
             />
+
           </svg>
+
 
           <span
             style={{
@@ -687,7 +998,11 @@ function App() {
                 "thermoGridPulse 1.5s ease-in-out infinite",
             }}
           />
+
         </div>
+
+
+        {/* API status */}
 
         <div className="system-status">
 
@@ -706,6 +1021,7 @@ function App() {
         </div>
 
       </header>
+
 
       <main>
 
@@ -736,6 +1052,7 @@ function App() {
             }}
           />
 
+
           <div className="section-title">
 
             <h2>
@@ -748,6 +1065,45 @@ function App() {
             </p>
 
           </div>
+
+
+          {/* Phoenix timezone indicator */}
+
+          <div
+            style={{
+              marginBottom: "18px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              border:
+                "1px solid rgba(34,211,238,0.2)",
+              background:
+                "rgba(34,211,238,0.05)",
+              fontSize: "12px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
+            }}
+          >
+
+            <span>
+              🌎 Analysis timezone:
+              {" "}
+              <strong>
+                America/Phoenix
+              </strong>
+            </span>
+
+            <span
+              style={{
+                opacity: 0.65,
+              }}
+            >
+              Date and time are interpreted as Phoenix local time.
+            </span>
+
+          </div>
+
 
           <div className="inputs">
 
@@ -764,11 +1120,14 @@ function App() {
                 step="0.000001"
                 value={latitude}
                 onChange={(e) =>
-                  setLatitude(e.target.value)
+                  setLatitude(
+                    e.target.value
+                  )
                 }
               />
 
             </div>
+
 
             {/* Longitude */}
 
@@ -783,11 +1142,14 @@ function App() {
                 step="0.000001"
                 value={longitude}
                 onChange={(e) =>
-                  setLongitude(e.target.value)
+                  setLongitude(
+                    e.target.value
+                  )
                 }
               />
 
             </div>
+
 
             {/* Date */}
 
@@ -795,17 +1157,30 @@ function App() {
 
               <label>
                 Analysis Date
+                <span
+                  style={{
+                    marginLeft: "7px",
+                    opacity: 0.55,
+                    fontSize: "10px",
+                  }}
+                >
+                  Phoenix
+                </span>
               </label>
 
               <input
                 type="date"
                 value={startDate}
+                disabled={phoenixTimeLoading}
                 onChange={(e) =>
-                  setStartDate(e.target.value)
+                  setStartDate(
+                    e.target.value
+                  )
                 }
               />
 
             </div>
+
 
             {/* Time */}
 
@@ -815,42 +1190,44 @@ function App() {
                 Analysis Time
                 <span
                   style={{
+                    marginLeft: "7px",
+                    opacity: 0.55,
+                    fontSize: "10px",
+                  }}
+                >
+                  Phoenix
+                </span>
+
+                <span
+                  style={{
                     marginLeft: "8px",
                     opacity: 0.65,
                     fontSize: "11px",
                   }}
                 >
-                  ({(() => {
-                    const [hours, minutes] =
-                      startTime.split(":").map(Number);
-
-                    if (
-                      !Number.isFinite(hours) ||
-                      !Number.isFinite(minutes)
-                    ) {
-                      return startTime;
-                    }
-
-                    const period =
-                      hours >= 12 ? "PM" : "AM";
-
-                    const displayHour =
-                      hours % 12 || 12;
-
-                    return `${String(displayHour).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${period}`;
-                  })()})
+                  (
+                  {formatPhoenixDateTime(
+                    startDate,
+                    startTime
+                  )}
+                  )
                 </span>
+
               </label>
 
               <input
                 type="time"
                 value={startTime}
+                disabled={phoenixTimeLoading}
                 onChange={(e) =>
-                  setStartTime(e.target.value)
+                  setStartTime(
+                    e.target.value
+                  )
                 }
               />
 
             </div>
+
 
             {/* Load */}
 
@@ -863,12 +1240,15 @@ function App() {
               <input
                 value={loadProfile}
                 onChange={(e) =>
-                  setLoadProfile(e.target.value)
+                  setLoadProfile(
+                    e.target.value
+                  )
                 }
                 placeholder="0.5,0.6,0.7,0.8,0.9,1.0"
               />
 
             </div>
+
 
             {/* Time step */}
 
@@ -884,11 +1264,14 @@ function App() {
                 step="0.1"
                 value={dtHours}
                 onChange={(e) =>
-                  setDtHours(e.target.value)
+                  setDtHours(
+                    e.target.value
+                  )
                 }
               />
 
             </div>
+
 
             {/* Granularity */}
 
@@ -903,34 +1286,69 @@ function App() {
                 min="1"
                 value={granularity}
                 onChange={(e) =>
-                  setGranularity(e.target.value)
+                  setGranularity(
+                    e.target.value
+                  )
                 }
               />
 
             </div>
+
 
             {/* Run */}
 
             <button
               className="simulate-button"
               onClick={runAnalysis}
-              disabled={loading}
+              disabled={
+                loading ||
+                !startDate ||
+                !startTime ||
+                !apiConnected
+              }
             >
+
               {loading
                 ? `Analyzing... ${elapsedSeconds}s`
                 : "Run ThermoGrid Analysis"}
+
             </button>
 
           </div>
 
+
+          {/* Phoenix clock information */}
+
+          <div
+            style={{
+              marginTop: "18px",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              border:
+                "1px solid rgba(34,211,238,0.18)",
+              background:
+                "rgba(34,211,238,0.04)",
+              fontSize: "12px",
+              opacity: 0.75,
+            }}
+          >
+            Phoenix time is calculated locally using
+            <strong> America/Phoenix </strong>
+            and does not depend on a Phoenix-time API endpoint.
+          </div>
+
+
           {/* Live analysis status */}
+
           {loading && (
+
             <div
               style={{
                 marginTop: "18px",
                 padding: "12px 16px",
                 borderRadius: "12px",
-                border: "1px solid rgba(34,211,238,0.25)",
+                border:
+                  "1px solid rgba(34,211,238,0.25)",
                 background:
                   "linear-gradient(90deg, rgba(8,47,73,0.22), rgba(15,23,42,0.3))",
                 display: "flex",
@@ -938,6 +1356,7 @@ function App() {
                 gap: "12px",
               }}
             >
+
               <span
                 aria-hidden="true"
                 style={{
@@ -952,7 +1371,12 @@ function App() {
                 }}
               />
 
-              <div style={{ flex: 1 }}>
+              <div
+                style={{
+                  flex: 1,
+                }}
+              >
+
                 <strong>
                   ThermoGrid analysis in progress
                 </strong>
@@ -966,11 +1390,13 @@ function App() {
                 >
                   FortyGuard → spatial mapping → thermal model → risk engine
                 </div>
+
               </div>
 
               <strong
                 style={{
-                  fontVariantNumeric: "tabular-nums",
+                  fontVariantNumeric:
+                    "tabular-nums",
                   color: "#67e8f9",
                   minWidth: "58px",
                   textAlign: "right",
@@ -978,13 +1404,18 @@ function App() {
               >
                 {elapsedSeconds}s
               </strong>
+
             </div>
+
           )}
+
 
           {/* Error */}
 
           {error && (
+
             <div className="error">
+
               <strong>
                 Analysis failed
               </strong>
@@ -996,10 +1427,14 @@ function App() {
               <small>
                 Failed after {elapsedSeconds}s
               </small>
+
             </div>
+
           )}
 
+
           {!loading && result && (
+
             <div
               style={{
                 marginTop: "14px",
@@ -1007,12 +1442,18 @@ function App() {
                 opacity: 0.7,
               }}
             >
+
               ✓ Analysis completed in{" "}
-              <strong>{elapsedSeconds}s</strong>
+              <strong>
+                {elapsedSeconds}s
+              </strong>
+
             </div>
+
           )}
 
         </section>
+
 
         {/* =================================================
             LOCATION / AOI VERIFICATION MAP
@@ -1025,7 +1466,9 @@ function App() {
             overflow: "hidden",
           }}
         >
+
           <div className="section-title">
+
             <h2>
               AOI & Transformer Verification
             </h2>
@@ -1034,16 +1477,20 @@ function App() {
               Visual check of the Phoenix AOI and the exact
               transformer coordinate sent to FortyGuard.
             </p>
+
           </div>
+
 
           <div
             style={{
-              border: "1px solid rgba(148,163,184,0.25)",
+              border:
+                "1px solid rgba(148,163,184,0.25)",
               borderRadius: "16px",
               overflow: "hidden",
               background: "#0f172a",
             }}
           >
+
             <MapContainer
               center={mapCenter}
               zoom={12}
@@ -1053,19 +1500,25 @@ function App() {
                 height: "430px",
               }}
             >
+
               <TileLayer
                 attribution='&copy; OpenStreetMap contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
+
               <MapViewport
                 transformer={
                   validTransformerCoordinates
-                    ? [transformerLat, transformerLon]
+                    ? [
+                        transformerLat,
+                        transformerLon,
+                      ]
                     : null
                 }
                 aoi={aoiPositions}
               />
+
 
               <Polygon
                 positions={aoiPositions}
@@ -1076,16 +1529,28 @@ function App() {
                   fillOpacity: 0.12,
                 }}
               >
+
                 <Popup>
-                  <strong>ThermoGrid AOI</strong>
+
+                  <strong>
+                    ThermoGrid AOI
+                  </strong>
+
                   <br />
+
                   Phoenix, Arizona
+
                   <br />
+
                   Default analysis polygon
+
                 </Popup>
+
               </Polygon>
 
+
               {validTransformerCoordinates && (
+
                 <CircleMarker
                   center={[
                     transformerLat,
@@ -1099,51 +1564,98 @@ function App() {
                     fillOpacity: 1,
                   }}
                 >
+
                   <Popup>
-                    <strong>Transformer</strong>
+
+                    <strong>
+                      Transformer
+                    </strong>
+
                     <br />
-                    Latitude:{" "}
+
+                    Latitude:
+                    {" "}
                     {transformerLat.toFixed(6)}
+
                     <br />
-                    Longitude:{" "}
+
+                    Longitude:
+                    {" "}
                     {transformerLon.toFixed(6)}
 
+
                     {result?.environment && (
+
                       <>
+
                         <br />
                         <br />
+
                         <strong>
                           Mapped temperature:
-                        </strong>{" "}
+                        </strong>
+
+                        {" "}
+
                         {Number(
-                          result.environment.temperature_C
+                          result.environment
+                            .temperature_C
                         ).toFixed(2)}
+
                         °C
+
                         <br />
+
                         <strong>
                           Tile:
-                        </strong>{" "}
+                        </strong>
+
+                        {" "}
+
                         {result.environment.tile_id}
+
                         <br />
+
                         <strong>
                           Method:
-                        </strong>{" "}
-                        {result.environment.mapping_method}
+                        </strong>
+
+                        {" "}
+
+                        {
+                          result.environment
+                            .mapping_method
+                        }
+
                         <br />
+
                         <strong>
                           Distance:
-                        </strong>{" "}
+                        </strong>
+
+                        {" "}
+
                         {Number(
-                          result.environment.distance_km
+                          result.environment
+                            .distance_km
                         ).toFixed(3)}
+
                         {" "}km
+
                       </>
+
                     )}
+
                   </Popup>
+
                 </CircleMarker>
+
               )}
+
             </MapContainer>
+
           </div>
+
 
           <div
             style={{
@@ -1154,6 +1666,7 @@ function App() {
               marginTop: "14px",
             }}
           >
+
             <div
               style={{
                 padding: "12px 14px",
@@ -1164,18 +1677,26 @@ function App() {
                   "1px solid rgba(34,211,238,0.18)",
               }}
             >
-              <small>TRANSFORMER</small>
+
+              <small>
+                TRANSFORMER
+              </small>
+
               <div
                 style={{
                   marginTop: "4px",
                   fontWeight: 700,
                 }}
               >
+
                 {validTransformerCoordinates
                   ? `${transformerLat.toFixed(6)}, ${transformerLon.toFixed(6)}`
                   : "Invalid coordinates"}
+
               </div>
+
             </div>
+
 
             <div
               style={{
@@ -1187,18 +1708,28 @@ function App() {
                   "1px solid rgba(59,130,246,0.18)",
               }}
             >
-              <small>AOI</small>
+
+              <small>
+                AOI
+              </small>
+
               <div
                 style={{
                   marginTop: "4px",
                   fontWeight: 700,
                 }}
               >
+
                 −112.10 to −112.05° lon
+
                 <br />
+
                 33.40 to 33.50° lat
+
               </div>
+
             </div>
+
 
             <div
               style={{
@@ -1210,20 +1741,29 @@ function App() {
                   "1px solid rgba(239,68,68,0.18)",
               }}
             >
-              <small>MAPPED ENVIRONMENT</small>
+
+              <small>
+                MAPPED ENVIRONMENT
+              </small>
+
               <div
                 style={{
                   marginTop: "4px",
                   fontWeight: 700,
                 }}
               >
+
                 {result?.environment
                   ? `${Number(
-                      result.environment.temperature_C
+                      result.environment
+                        .temperature_C
                     ).toFixed(2)}°C`
                   : "Run analysis"}
+
               </div>
+
             </div>
+
 
             <div
               style={{
@@ -1235,19 +1775,29 @@ function App() {
                   "1px solid rgba(168,85,247,0.18)",
               }}
             >
-              <small>MAPPING</small>
+
+              <small>
+                MAPPING
+              </small>
+
               <div
                 style={{
                   marginTop: "4px",
                   fontWeight: 700,
                 }}
               >
+
                 {result?.environment
-                  ? result.environment.mapping_method
+                  ? result.environment
+                      .mapping_method
                   : "Waiting for result"}
+
               </div>
+
             </div>
+
           </div>
+
 
           <div
             style={{
@@ -1261,7 +1811,13 @@ function App() {
                 "1px solid rgba(148,163,184,0.18)",
             }}
           >
-            <strong>Verification note:</strong>{" "}
+
+            <strong>
+              Verification note:
+            </strong>
+
+            {" "}
+
             the red marker is the transformer coordinate,
             while the cyan polygon is the AOI being sent in
             the existing analysis request. The temperature
@@ -1271,14 +1827,18 @@ function App() {
             not expose the individual FortyGuard tile geometries,
             so this map does not pretend to draw a heatmap that
             the backend has not returned.
+
           </div>
+
         </section>
+
 
         {/* =================================================
             RESULTS
         ================================================= */}
 
         {result && (
+
           <>
 
             {/* =================================================
@@ -1303,6 +1863,7 @@ function App() {
 
               </div>
 
+
               <div className="kpi-card">
 
                 <span>
@@ -1319,6 +1880,7 @@ function App() {
 
               </div>
 
+
               <div className="kpi-card">
 
                 <span>
@@ -1334,6 +1896,7 @@ function App() {
                 </small>
 
               </div>
+
 
               <div className="kpi-card">
 
@@ -1353,6 +1916,7 @@ function App() {
 
             </section>
 
+
             {/* =================================================
                 ENVIRONMENT
             ================================================= */}
@@ -1371,6 +1935,7 @@ function App() {
 
               </div>
 
+
               <div className="kpi-grid">
 
                 <div className="kpi-card">
@@ -1385,6 +1950,7 @@ function App() {
 
                 </div>
 
+
                 <div className="kpi-card">
 
                   <span>
@@ -1396,6 +1962,7 @@ function App() {
                   </strong>
 
                 </div>
+
 
                 <div className="kpi-card">
 
@@ -1410,6 +1977,7 @@ function App() {
                   </strong>
 
                 </div>
+
 
                 <div className="kpi-card">
 
@@ -1428,6 +1996,7 @@ function App() {
               </div>
 
             </section>
+
 
             {/* =================================================
                 RISK
@@ -1449,6 +2018,7 @@ function App() {
 
               </div>
 
+
               <p>
 
                 {result.risk.message}
@@ -1456,17 +2026,20 @@ function App() {
                 <br />
 
                 Peak hotspot:
+
                 {" "}
 
                 <b>
                   {Number(
-                    result.risk.hotspot_temperature_C
+                    result.risk
+                      .hotspot_temperature_C
                   ).toFixed(2)}°C
                 </b>
 
                 {" • "}
 
                 Risk score:
+
                 {" "}
 
                 <b>
@@ -1478,6 +2051,7 @@ function App() {
               </p>
 
             </section>
+
 
             {/* =================================================
                 TRANSFORMER HEALTH
@@ -1497,6 +2071,7 @@ function App() {
 
               </div>
 
+
               <div className="kpi-grid">
 
                 <div className="kpi-card">
@@ -1507,11 +2082,13 @@ function App() {
 
                   <strong>
                     {Number(
-                      result.thermal.average_aging_factor
+                      result.thermal
+                        .average_aging_factor
                     ).toFixed(4)}×
                   </strong>
 
                 </div>
+
 
                 <div className="kpi-card">
 
@@ -1521,11 +2098,13 @@ function App() {
 
                   <strong>
                     {Number(
-                      result.thermal.equivalent_aging_hours
+                      result.thermal
+                        .equivalent_aging_hours
                     ).toFixed(3)} h
                   </strong>
 
                 </div>
+
 
                 <div className="kpi-card">
 
@@ -1535,11 +2114,13 @@ function App() {
 
                   <strong>
                     {Number(
-                      result.thermal.loss_of_life_percent
+                      result.thermal
+                        .loss_of_life_percent
                     ).toFixed(6)}%
                   </strong>
 
                 </div>
+
 
                 <div className="kpi-card">
 
@@ -1556,6 +2137,7 @@ function App() {
               </div>
 
             </section>
+
 
             {/* =================================================
                 THERMAL CHART
@@ -1576,6 +2158,7 @@ function App() {
 
               </div>
 
+
               <div className="chart">
 
                 <ResponsiveContainer
@@ -1584,7 +2167,9 @@ function App() {
                 >
 
                   <LineChart
-                    data={result.thermal_response}
+                    data={
+                      result.thermal_response
+                    }
                   >
 
                     <CartesianGrid
@@ -1612,6 +2197,7 @@ function App() {
 
                     <Legend />
 
+
                     <Line
                       type="monotone"
                       dataKey="ambient_C"
@@ -1621,6 +2207,7 @@ function App() {
                       dot={false}
                     />
 
+
                     <Line
                       type="monotone"
                       dataKey="top_oil_C"
@@ -1629,6 +2216,7 @@ function App() {
                       strokeWidth={3}
                       dot={false}
                     />
+
 
                     <Line
                       type="monotone"
@@ -1646,6 +2234,7 @@ function App() {
               </div>
 
             </section>
+
 
             {/* =================================================
                 LOAD CHART
@@ -1666,6 +2255,7 @@ function App() {
 
               </div>
 
+
               <div className="chart">
 
                 <ResponsiveContainer
@@ -1674,7 +2264,9 @@ function App() {
                 >
 
                   <LineChart
-                    data={result.thermal_response}
+                    data={
+                      result.thermal_response
+                    }
                   >
 
                     <CartesianGrid
@@ -1697,6 +2289,7 @@ function App() {
 
                     <Legend />
 
+
                     <Line
                       type="monotone"
                       dataKey="load_pu"
@@ -1712,6 +2305,7 @@ function App() {
               </div>
 
             </section>
+
 
             {/* =================================================
                 FORTYGUARD DETAILS
@@ -1731,70 +2325,101 @@ function App() {
 
               </div>
 
+
               <p>
+
                 Activity ID:
+
                 {" "}
 
                 <code>
                   {result.fortyguard.activity_id}
                 </code>
+
               </p>
 
+
               <p>
+
                 Tiles analyzed:
+
                 {" "}
 
                 <b>
-                  {result.fortyguard.statistics.tile_count}
+                  {
+                    result.fortyguard
+                      .statistics.tile_count
+                  }
                 </b>
+
               </p>
 
+
               <p>
+
                 Regional minimum:
+
                 {" "}
 
                 <b>
                   {Number(
-                    result.fortyguard.statistics.minimum_C
+                    result.fortyguard
+                      .statistics.minimum_C
                   ).toFixed(2)}°C
                 </b>
+
               </p>
 
+
               <p>
+
                 Regional maximum:
+
                 {" "}
 
                 <b>
                   {Number(
-                    result.fortyguard.statistics.maximum_C
+                    result.fortyguard
+                      .statistics.maximum_C
                   ).toFixed(2)}°C
                 </b>
+
               </p>
 
+
               <p>
+
                 Regional mean:
+
                 {" "}
 
                 <b>
                   {Number(
-                    result.fortyguard.statistics.mean_C
+                    result.fortyguard
+                      .statistics.mean_C
                   ).toFixed(2)}°C
                 </b>
+
               </p>
 
             </section>
 
           </>
+
         )}
 
       </main>
 
+
       <footer>
+
         ThermoGrid • Transformer Thermal Intelligence
+
       </footer>
 
     </div>
   );
 }
+
 
 export default App;

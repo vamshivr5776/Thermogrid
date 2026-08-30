@@ -1,4 +1,6 @@
 from typing import Any
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,15 +19,31 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------
+# PHOENIX TIMEZONE
+# ---------------------------------------------------------
+
+PHOENIX_TZ = ZoneInfo("America/Phoenix")
+
+
+def get_current_phoenix_time():
+    now = datetime.now(PHOENIX_TZ)
+
+    return {
+        "start_date": now.strftime("%Y-%m-%d"),
+        "start_time": now.strftime("%H:00"),
+    }
+
+
+# ---------------------------------------------------------
 # CORS
 # ---------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    "http://localhost:5173",
-    "https://thermogrid.netonline.in",
-],
+        "http://localhost:5173",
+        "https://thermogrid.netonline.in",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -133,6 +151,22 @@ def health():
 
 
 # ---------------------------------------------------------
+# CURRENT PHOENIX TIME
+# ---------------------------------------------------------
+
+@app.get("/analysis/current-phoenix-time")
+def current_phoenix_time():
+
+    current_time = get_current_phoenix_time()
+
+    return {
+        "timezone": "America/Phoenix",
+        "start_date": current_time["start_date"],
+        "start_time": current_time["start_time"],
+    }
+
+
+# ---------------------------------------------------------
 # Existing standalone thermal endpoint
 # ---------------------------------------------------------
 
@@ -208,6 +242,13 @@ def analyze_transformer(
 ):
 
     try:
+
+        # Diagnostic logging
+        print("\n========== THERMOGRID REQUEST TIME ==========")
+        print("start_date =", request.start_date)
+        print("start_time =", request.start_time)
+        print("granularity =", request.granularity)
+        print("=============================================")
 
         result = analysis_service.analyze_transformer(
             latitude=request.latitude,
