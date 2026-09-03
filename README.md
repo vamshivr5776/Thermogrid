@@ -1,4 +1,4 @@
-# 🌡️ ThermoGrid AI
+I# 🌡️ ThermoGrid AI
 
 ### Location-Aware Transformer Thermal Intelligence
 
@@ -1126,6 +1126,8 @@ Deployment
 ### 🌐 Live Application
 
 [https://thermogrid.netonline.in](https://thermogrid.netonline.in)
+
+Better to view in desktop mode if you are using it in phone. 
 
 ### 📦 GitHub Repository
 
